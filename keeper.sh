@@ -33,7 +33,9 @@ patch_deploy() {
 # 1. Find any queued/running Actions runs across all reeds repos
 ACTIVE=0
 REPO_COUNT=0
-REPOS=$(curl -sf -H "Authorization: token $TOKEN" "$GITEA_URL/api/v1/repos/search?limit=50" | jq -r '.data[]?.full_name' 2>/dev/null)
+# limit=100: the 51st repo silently fell off limit=50 and starved the runner
+# (keeper never saw its queued runs and slept the deployment). 2026-08-15.
+REPOS=$(curl -sf -H "Authorization: token $TOKEN" "$GITEA_URL/api/v1/repos/search?limit=100" | jq -r '.data[]?.full_name' 2>/dev/null)
 for r in $REPOS; do
   REPO_COUNT=$((REPO_COUNT+1))
   runs=$(curl -sf -H "Authorization: token $TOKEN" "$GITEA_URL/api/v1/repos/$r/actions/runs?limit=5" 2>/dev/null)
