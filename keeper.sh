@@ -33,9 +33,24 @@ patch_deploy() {
 # 1. Find any queued/running Actions runs across all reeds repos
 ACTIVE=0
 REPO_COUNT=0
-# limit=100: the 51st repo silently fell off limit=50 and starved the runner
-# (keeper never saw its queued runs and slept the deployment). 2026-08-15.
-REPOS=$(curl -sf -H "Authorization: token $TOKEN" "$GITEA_URL/api/v1/repos/search?limit=100" | jq -r '.data[]?.full_name' 2>/dev/null)
+# Gitea caps a search page at 50 no matter what limit you ask for, so
+# limit=100 silently returned only 50 repos — alphabetically ending at
+# "smoke-*". reeds/talaria was invisible, its queued run never woke the
+# runner, and CI sat queued forever. Page until we stop getting results.
+# 2026-10-03.
+REPOS=""
+PAGE=1
+while :; do
+  PAGE_REPOS=$(curl -sf -H "Authorization: token $TOKEN" \
+    "$GITEA_URL/api/v1/repos/search?limit=50&page=$PAGE" \
+    | jq -r '.data[]?.full_name' 2>/dev/null)
+  [ -n "$PAGE_REPOS" ] || break
+  REPOS="$REPOS $PAGE_REPOS"
+  [ "$(echo "$PAGE_REPOS" | wc -l)" -lt 50 ] && break
+  PAGE=$((PAGE+1))
+  [ "$PAGE" -gt 10 ] && break
+done
+[ -n "$REPOS" ] || { log "ERROR: repo search returned nothing"; exit 0; }
 for r in $REPOS; do
   REPO_COUNT=$((REPO_COUNT+1))
   runs=$(curl -sf -H "Authorization: token $TOKEN" "$GITEA_URL/api/v1/repos/$r/actions/runs?limit=5" 2>/dev/null)
@@ -81,6 +96,6 @@ else
     patch_deploy '{"spec":{"replicas":0}}' && log "SLEEP: scaled $DEPLOY to 0 (idle ${idle_age}m)" \
       || log "ERROR: sleep patch failed"
   else
-    log "idle ${idle_age}m < ${IDLE_MIN}m — runner stays"
+    log "idle ${idle_age}m (threshold ${IDLE_MIN}m), replicas=$CUR — runner stays"
   fi
 fi
